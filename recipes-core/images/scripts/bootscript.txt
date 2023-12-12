@@ -1,0 +1,266 @@
+##########  Modify to change Config variables ################
+# Flash device used for booting
+# e.g.,
+#   - For Parallel flash flash_bootdev=physmap-flash.0
+#   - For Serial flash flash_bootdev=spansion
+flash_bootdev=spansion
+flash_seconddev=spansion1
+
+bootargs_extra="ethaddr0=${ethaddr} usbhostaddr=${usbhostaddr} boardtype=${boardtype} eth0_mdio_phy_addr=${eth0_mdio_phy_addr} ext_switch_reset_gpio=${ext_switch_reset_gpio} threadirqs"
+############## DO NOT modify after this line #################
+
+# Cleanup garbage that may have been created by older versions of this script
+# These older versions used global variables (setenv var val) instead of local variables (var=val)
+# If saveenv was executed, these unecessarily global variables were saved
+# Here they are removed before the script starts, removing non-existant vars causes no harm
+setenv mtd1info
+setenv mtd2info
+setenv mtdinfo
+setenv rootinfo
+# Cleanup complete
+
+echo ============== Running script =========
+
+# The following are used as const
+eval 0${NFS_BOOT} + 0;
+rootfsNFS=${evalval};
+
+# Get address of image to run
+if itest ${ACTIMAGE} == 1; then
+    imgbase=${UBFIADDR1};
+else if itest ${ACTIMAGE} == 2; then
+    imgbase=${UBFIADDR2};
+else if itest ${ACTIMAGE} == 3; then
+    eval *0x80000000 - ${UBFI3RAMRESERVE};
+    mem=$evalval;
+    eval 0x80000000 + $mem;
+    imgbase=$evalval;
+else
+    echo *** ACTIMAGE invalid;
+    exit;
+fi;
+fi;
+fi;
+
+if itest ${ACTIMAGE} == 1 || itest ${ACTIMAGE} == 2; then
+    echo *** Running from UBFI${ACTIMAGE} partition @${imgbase};
+else
+    echo *** Running from RAM partition @${imgbase};
+fi
+
+# Image header
+scriptbase=$imgbase;
+
+# Get size of bootscript
+# 4th uint in image header: uint32_t    ih_size;    /* Image Data Size      */
+# Get pointer to size
+eval $scriptbase + 0xC;
+scriptsize_p=${evalval};
+# Get size from pointer
+eval *$scriptsize_p + 0;
+scriptsize=${evalval};
+# Add length of header
+eval $scriptsize + 0x40;
+scriptsize=${evalval};
+
+# 1st image (after booscript) contains Kernel, Root file system, Additional file systems
+# Get address of image 
+multioffset=$scriptsize;
+eval $scriptbase + $multioffset;
+multibase=${evalval};
+loadoffset=$multioffset
+# Address of image
+loadaddr=$multibase
+
+# After the header (0x40), we find a list of sub-image lengths
+eval $multibase + 0x40;
+imgsize_p=${evalval};
+eval *$imgsize_p + 0;
+imgsize=${evalval};
+# 1st sub-image is kernel
+kernelsize=$imgsize;
+# 2nd sub-image is root file system
+eval $imgsize_p + 4;
+imgsize_p=${evalval};
+eval *$imgsize_p + 0;
+rootfs_size=${evalval};
+# Collect the rest of the file systems 
+additional_fss="";
+additional_fss_ctr=1;
+eval $imgsize_p + 4;
+imgsize_p=${evalval};
+eval *$imgsize_p + 0;
+imgsize=${evalval};
+while itest $imgsize != 0; do 
+    # Additional FS
+    additional_fss="${additional_fss},${imgsize}(FS${additional_fss_ctr})ro";
+    eval ${additional_fss_ctr} + 1; additional_fss_ctr=${evalval};
+    # Next sub image
+    eval $imgsize_p + 4;
+    imgsize_p=${evalval};
+    eval *$imgsize_p + 0;
+    imgsize=${evalval};
+done;
+
+# Kernel follows list of sub-image sizes
+eval $imgsize_p + 4;
+imgsize_p=${evalval};
+kerneladdr=$imgsize_p
+eval $kerneladdr - $scriptbase
+kerneloffset=${evalval}
+# Root FS follows
+eval $imgsize_p + $kernelsize;
+rootfsaddr=${evalval};
+eval $rootfsaddr - $scriptbase; 
+rootfsoffset=${evalval};
+
+eval ${UBFIADDR2} - ${UBFIADDR1}
+ubfipartsize=${evalval}
+
+if itest ${ubfipartsize} >= 0x1000000
+then dual_flash=1;
+else dual_flash=0;
+fi;
+
+eval ${envpartsize} + ${envpartsize}
+eval ${evalval} + ${ubootpartsize}
+ubfipartoffset1=${evalval}
+
+if itest ${dual_flash} == 0; then
+    eval $ubfipartoffset1 + $ubfipartsize
+    ubfipartoffset2=${evalval}
+else
+    ubfipartoffset2=0
+fi
+
+nvramsect=0;
+if itest ${envpartsize} == 0x10000;
+then nvramsect=${envpartsize};
+fi;
+if itest ${envpartsize} >= 0x10000;
+then nvramsectors=0x5;
+else nvramsectors=0x40;
+fi;
+
+nvramsize=0;
+while itest.b $nvramsectors != 0;
+do 
+    eval ${nvramsize} + ${envpartsize};
+    nvramsize=${evalval}; 
+    eval ${nvramsectors} - 1; 
+    nvramsectors=${evalval};
+done;
+
+
+# monolithic flash - adjust the UBFI size  
+if itest ${dual_flash} == 0; then
+    if itest ${ubfipartsize} >= 0xFC0000; then
+        eval ${envpartsize} + ${envpartsize};
+        eval ${evalval} + ${ubootpartsize};
+        eval ${nvramsize} - ${evalval};
+        eval ${ubfipartsize} - ${evalval};
+        ubfipartsize=${evalval};
+        nvramsect=0;
+    fi;
+fi;
+
+
+if itest ${dual_flash} == 0; then
+    eval ${ubfipartoffset2} + ${ubfipartsize}
+    eval ${evalval} + ${nvramsect}
+    nvramoffset=${evalval}
+else
+    eval 0x1000000 - ${nvramsize}
+    nvramoffset=${evalval}
+    ubfipartsize=${nvramoffset}
+fi
+
+mtdparts_extra=,${nvramsize}@${nvramoffset}(nvram)
+
+if itest ${rootfsNFS} == 1; then
+    hostname="mynfsserver"
+    ip="ip=${ipaddr}:${serverip}:${gatewayip}:${netmask}:${hostname}:eth0:off"
+    eval 0${NFSVERS} + 0; nfsvers=${evalval}; if itest ${nfsvers} == 0; then nfsvers=2; fi
+    eval 0${RSIZE} + 0; rsize=${evalval}; if itest ${rsize} == 0; then rsize=4096; fi
+    eval 0${WSIZE} + 0; wsize=${evalval}; if itest ${wsize} == 0; then wsize=8192; fi
+    nfsroot="nfsroot=${serverip}:${NFS_ROOT_DIR},nfsvers=${nfsvers},rsize=${rsize},wsize=${wsize},tcp"
+    nwhwconf="nwhwconf=device:eth0,hwaddr:${ethaddr}"
+    nfsinfo="${ip} ${nwhwconf} ${nfsroot}"
+fi
+
+echo Load address = $loadaddr ($loadoffset);
+echo Kernel address = $kerneladdr ($kerneloffset);
+echo kernel size = $kernelsize;
+if itest ${rootfsNFS} == 1; then
+    echo FS on NFS server at ${serverip}:${NFS_ROOT_DIR}
+else
+    echo Root FS address = $rootfsaddr ($rootfsoffset);
+    echo Root FS size = $rootfs_size
+    echo Additional FS = ${additional_fss}
+fi
+echo NVRAM offset = ${nvramoffset}
+echo NVRAM size = ${nvramsize}
+
+if itest.b ${ACTIMAGE} == 1; then
+    eval $ubfipartoffset1 + $kerneloffset
+    kernelpartoffset=${evalval}
+    if itest ${dual_flash} != 0; then
+        mtd1info="${ubootpartsize}(U-Boot)ro,${envpartsize}(env1),${envpartsize}(env2),$ubfipartsize@$ubfipartoffset1(UBFI1),$kernelsize@$kernelpartoffset(Kernel)ro,$rootfs_size(RootFileSystem)ro${additional_fss}"
+        mtd2info="$ubfipartsize@$ubfipartoffset2(UBFI2)"
+        rootinfo="/dev/mtdblock5"
+    fi
+else
+    if itest.b ${ACTIMAGE} == 2; then
+        if itest ${dual_flash} == 0; then
+            eval ${ubfipartoffset2} + $kerneloffset
+            kernelpartoffset=${evalval}
+        else
+            mtd1info="${ubootpartsize}(U-Boot)ro,${envpartsize}(env1),${envpartsize}(env2),$ubfipartsize@$ubfipartoffset1(UBFI1)"
+            mtd2info="$ubfipartsize@$ubfipartoffset2(UBFI2),$kernelsize@$kerneloffset(Kernel)ro,$rootfs_size(RootFileSystem)ro${additional_fss}"
+            rootinfo="/dev/mtdblock6"
+        fi;
+    else
+        # RAM
+        # Add another MTD "device", in RAM, will include kernel && filesystem
+        phram="phram.phram=RAM0,$imgbase,${UBFI3RAMRESERVE} mem=$mem"
+        # Add ot 1st, so the FS mtd is always 1
+        rammtd="$kernelsize@$kerneloffset(Kernel)ro,$rootfs_size@$rootfsoffset(RootFileSystem)ro${additional_fss}"
+
+        if itest ${dual_flash} == 0; then
+            mtdinfo="${ubootpartsize}(U-Boot)ro,${envpartsize}(env1),${envpartsize}(env2),$ubfipartsize@$ubfipartoffset1(UBFI1),$ubfipartsize@$ubfipartoffset2(UBFI2)"
+            mtdparts="$flash_bootdev:${mtdinfo}${mtdparts_extra}"
+        else
+            mtd1info="${ubootpartsize}(U-Boot)ro,${envpartsize}(env1),${envpartsize}(env2),$ubfipartsize@$ubfipartoffset1(UBFI1)"
+            mtd2info="$ubfipartsize@$ubfipartoffset2(UBFI2)"
+            mtdparts="$flash_bootdev:${mtd1info};$flash_seconddev:${mtd2info}${mtdparts_extra}"
+        fi
+
+        mtdparts="RAM0:$rammtd;${mtdparts} ${phram}"
+        rootinfo="/dev/mtdblock2"
+    fi;
+fi;
+
+if itest ${ACTIMAGE} != 3; then
+    if itest ${dual_flash} == 0; then
+        mtdinfo="${ubootpartsize}(U-Boot)ro,${envpartsize}(env1),${envpartsize}(env2),$ubfipartsize@$ubfipartoffset1(UBFI1),$ubfipartsize@$ubfipartoffset2(UBFI2),$kernelsize@$kernelpartoffset(Kernel)ro,$rootfs_size(RootFileSystem)ro${additional_fss}"
+        mtdparts="$flash_bootdev:${mtdinfo}${mtdparts_extra}"
+        rootinfo="/dev/mtdblock6"
+    else
+        mtdparts="$flash_bootdev:${mtd1info};$flash_seconddev:${mtd2info}${mtdparts_extra}"
+    fi
+fi
+
+if itest ${rootfsNFS} == 1; then
+    rootinfo="/dev/nfs rw"
+fi
+
+eval 0${KLOGLEVEL} + 0
+if itest ${evalval} != 0;
+then
+    bootargs_extra="$bootargs_extra debug loglevel=${KLOGLEVEL}"
+fi
+
+setenv bootargs "root=${rootinfo} mtdparts=${mtdparts} console=ttyS0,${baudrate}n8 ${nfsinfo} $bootargs_extra"
+
+setenv LOADADDR $loadaddr
+

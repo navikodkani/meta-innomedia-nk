@@ -1,0 +1,295 @@
+# New Script note:
+# U-Boot version 2.0.0.36 support new utility 'ubfiload' this utility parse the ubfi image. uding save script size, therefore it save boot time. 
+
+if test -n $shortscript ; then
+    if itest.s $shortscript == true; then 
+        if itest.s $bootdevice == mmc; then 
+            ubfiload $SCRIPTADDR -loadaddr;
+            setenv bootargs root=$np_rootfs_part_path rootwait ro nvram=$np_nvram_part_path fs1=$np_fs1_part_path console=ttyS0,115200n8 boardtype=${boardtype} threadirqs ;
+            exit;
+        fi
+        if itest.s $bootdevice == spi; then
+            ubfiload $SCRIPTADDR -loadaddr -parts;
+            eval $ubfioffset + $flash_kernel_offset;
+            flash_kernel_offset=$evalval;
+            eval $ubfioffset + $flash_rootfs_offset;
+            flash_rootfs_offset=$evalval;
+            setenv bootargs root=/dev/mtdblock8 mtdparts=spansion:$ubootsize@$ubootoffset(U-Boot)ro,$envsize@$envoffset1(env1),$envsize@$envoffset2(env2),$arm11ubfisize1@$arm11ubfioffset1(UBFI1),$arm11ubfisize2@$arm11ubfioffset2(UBFI2),$atomubfisize1@$atomubfioffset1(ATOM-UBFI1),$atomubfisize2@$atomubfioffset2(ATOM-UBFI2),$flash_kernel_size@$flash_kernel_offset(Kernel)ro,$flash_rootfs_size@$flash_rootfs_offset(RootFileSystem)ro,$arm11nvramsize@$arm11nvramoffset(nvram) console=ttyS0,115200n8 boardtype=${boardtype} threadirqs;
+            exit;
+        fi;
+        if itest.s $bootdevice == mem; then
+            ubfiload $SCRIPTADDR -loadaddr -parts;
+            setenv bootargs root=/dev/mtdblock2 mtdparts=RAM0:${flash_kernel_size}@${flash_kernel_offset}(Kernel-RAM)ro,${flash_rootfs_size}@${flash_rootfs_offset}(RootFileSystem-RAM)ro phram.phram=RAM0,${SCRIPTADDR},${RAM_IMAGE_SIZE} mem=${RAM_IMAGE_OFFSET} console=ttyS0,115200n8 boardtype=0x00000001 threadirqs;
+            exit;
+        fi
+        echo No valid 'bootdevice' variable, script failed.;
+        exit;
+    fi;
+fi
+
+##########  Modify to change Config variables ################
+# Flash device used for booting
+# e.g.,
+#   - For Parallel flash flash_bootdev=physmap-flash.0
+#   - For Serial flash flash_bootdev=spansion
+flash_bootdev=spansion
+flash_seconddev=spansion1
+
+bootargs_extra="ethaddr0=${ethaddr} usbhostaddr=${usbhostaddr} boardtype=${boardtype} eth0_mdio_phy_addr=${eth0_mdio_phy_addr} ext_switch_reset_gpio=${ext_switch_reset_gpio} threadirqs"
+############## DO NOT modify after this line #################
+
+# Cleanup garbage that may have been created by older versions of this script
+# These older versions used global variables (setenv var val) instead of local variables (var=val)
+# If saveenv was executed, these unecessarily global variables were saved
+# Here they are removed before the script starts, removing non-existant vars causes no harm
+setenv mtd1info
+setenv mtd2info
+setenv mtdinfo
+setenv rootinfo
+# Cleanup complete
+
+echo ========== Running script (puma6)  ver 2.5 =========
+
+# The following are used as const
+
+
+
+# Get address of image to run
+if itest.s $bootdevice == mmc; then
+    ubfibase=${UBFIADDR_MMC};
+    ubfipartoffset=0;
+    if itest ${ACTIMAGE} == 1; then
+        ubfiaddr=${UBFIADDR1};
+    else
+        ubfiaddr=${UBFIADDR2};
+    fi;
+    echo *** Running from UBFI${ACTIMAGE} partition @${ubfibase} (eMMC);
+else if itest ${ACTIMAGE} == 1; then
+    ubfibase=${UBFIADDR1};
+    ubfipartoffset=${arm11ubfioffset1};
+    echo *** Running from UBFI${ACTIMAGE} partition @${ubfibase};
+else if itest ${ACTIMAGE} == 2; then
+    ubfibase=${UBFIADDR2};
+    ubfipartoffset=${arm11ubfioffset2};
+    echo *** Running from UBFI${ACTIMAGE} partition @${ubfibase};
+else if itest ${ACTIMAGE} == 3; then;
+    eval ${rambase} + ${ramoffset};
+    eval ${evalval} + ${RAM_IMAGE_OFFSET};
+    ubfibase=${evalval};
+    ubfipartoffset=0;
+    ubfipartsize=${RAM_IMAGE_SIZE};
+
+    # since we take some of the RAM to be used as a MTD partition, so the kernel have less avaliable memory space to use.
+    # we set it with the command 'mem=VALUE', Note that we assume that the RAM_IMAGE location is in the top of the RAM
+    eval ${ramsize} - ${ubfipartsize}
+    mem=$evalval;
+
+    echo *** Running from UBFI${ACTIMAGE} partition @${ubfibase} (RAM);
+else
+    echo *** ACTIMAGE invalid;
+    exit;
+fi;
+fi;
+fi;
+fi;
+
+# Image header
+scriptbase=${ubfibase};
+#echo [DEBUG] scriptbase: ${scriptbase} (Absolute Based)
+
+# Get size of bootscript
+# 4th uint in image header: uint32_t    ih_size;    /* Image Data Size      */
+# Get pointer to size
+eval $scriptbase + 0xC;
+scriptsize_p=${evalval};
+# Get size from pointer
+eval *$scriptsize_p + 0;
+scriptsize=${evalval};
+# Add length of header
+eval $scriptsize + 0x40;
+scriptsize=${evalval};
+#echo [DEBUG] scriptsize: ${scriptsize}
+
+# 1st image (after booscript) contains Kernel, Root file system, Additional file systems
+# Get address of image 
+multioffset=$scriptsize;
+eval $scriptbase + $multioffset;
+multibase=${evalval};
+loadoffset=$multioffset
+# Address of image
+loadaddr=$multibase
+
+# After the header (0x40), we find a list of sub-image lengths
+eval $multibase + 0x40;
+imgsize_p=${evalval};
+eval *$imgsize_p + 0;
+imgsize=${evalval};
+# 1st sub-image is kernel
+kernelsize=$imgsize;
+# Read next image size
+eval $imgsize_p + 4;
+imgsize_p=${evalval};
+eval *$imgsize_p + 0;
+imgsize=${evalval};
+if itest $imgsize == 0; then
+    # No more FS-s
+    additional_fss="";
+    rootfs_size=0;
+else
+    # 2nd sub-image is root file system
+    rootfs_size=${imgsize};
+    # Collect the rest of the file systems 
+    additional_fss="";
+    additional_fss_ctr=1;
+    # Read next image size
+    eval $imgsize_p + 4;
+    imgsize_p=${evalval};
+    eval *$imgsize_p + 0;
+    imgsize=${evalval};
+
+    # Read all images sizes (if exist) to advance the pointer till end of Multi Images Header
+    while itest $imgsize != 0; do 
+        # Additional FS
+        additional_fss="${additional_fss},${imgsize}(FS${additional_fss_ctr})ro";
+        eval ${additional_fss_ctr} + 1; additional_fss_ctr=${evalval};
+        # Next sub image
+        eval $imgsize_p + 4;
+        imgsize_p=${evalval};
+        eval *$imgsize_p + 0;
+        imgsize=${evalval};
+    done;
+fi;
+
+#Increase the pointer last time, to get Kernel image base address
+eval $imgsize_p + 4;
+kernelbase=${evalval};
+#echo [DEBUG] kernelbase: ${kernelbase}  (Absolute Based)
+
+#Set the Kernel image offset
+eval ${kernelbase} - ${scriptbase}
+kerneloffset=${evalval}
+#echo [DEBUG] kerneloffset: ${kerneloffset}  (offset in UBFI)
+
+#Set Kernel partition offset
+eval ${ubfipartoffset} + ${kerneloffset}
+kernelpartoffset=${evalval}
+#echo [DEBUG] kernelpartoffset: $kernelpartoffset  (offset in FLASH)
+
+#Set File-System partition offset
+eval ${kernelpartoffset} + ${kernelsize}
+fspartoffset=${evalval}
+#echo [DEBUG] fspartoffset: ${fspartoffset}  (offset in FLASH)
+
+
+#set MTD Parts
+#--------------
+# mtdparts=<mtddef>[;<mtddef]
+# <mtddef>  := <mtd-id>:<partdef>[,<partdef>]
+# <partdef> := <size>[@offset][<name>][ro]
+# <mtd-id>  := unique name used in mapping driver/device (mtd->name)
+# <size>    := standard linux memsize OR "-" to denote all remaining space
+# <name>    := '(' NAME ')'
+
+
+mtdpart_uboot="${ubootsize}@${ubootoffset}(U-Boot)ro"  
+mtdpart_env1="${envsize}@${envoffset1}(env1)"
+mtdpart_env2="${envsize}@${envoffset2}(env2)"
+mtdpart_ubfi1="${arm11ubfisize1}@${arm11ubfioffset1}(UBFI1)"
+mtdpart_ubfi2="${arm11ubfisize2}@${arm11ubfioffset2}(UBFI2)"
+mtdpart_atom_ubfi1="${atomubfisize1}@${atomubfioffset1}(ATOM-UBFI1)"
+mtdpart_atom_ubfi2="${atomubfisize2}@${atomubfioffset2}(ATOM-UBFI2)"
+mtdpart_nvram="${arm11nvramsize}@${arm11nvramoffset}(nvram)"
+mtdpart_kernel="${kernelsize}@${kernelpartoffset}(Kernel)ro"
+mtdpart_fs="${rootfs_size}@${fspartoffset}(RootFileSystem)ro"
+mtdpart_kernel_ram="${kernelsize}@${kernelpartoffset}(Kernel-RAM)ro"
+mtdpart_fs_ram="${rootfs_size}@${fspartoffset}(RootFileSystem-RAM)ro"
+
+
+
+if itest.s $bootdevice == mmc; then
+    if itest ${ACTIMAGE} == 1; then
+        root_cmd="root=/dev/mmcblk0p${mmc_part_arm11_rootfs_0} rootwait ro";
+        nvram_cmd="nvram=/dev/mmcblk0p${mmc_part_arm11_nvram}";
+        phram_cmd="";
+        mtd_cmd="";
+        if itest ${mmc_part_arm11_gw_fs_0} != 0; then
+            gw_fs_cmd="fs1=/dev/mmcblk0p${mmc_part_arm11_gw_fs_0}";
+        else
+            gw_fs_cmd="";
+        fi;
+    else if itest ${ACTIMAGE} == 2; then
+        root_cmd="root=/dev/mmcblk0p${mmc_part_arm11_rootfs_1}  rootwait ro";
+        nvram_cmd="nvram=/dev/mmcblk0p${mmc_part_arm11_nvram}";
+        phram_cmd="";
+        mtd_cmd="";
+        if itest ${mmc_part_arm11_gw_fs_0} != 0; then
+            gw_fs_cmd="fs1=/dev/mmcblk0p${mmc_part_arm11_gw_fs_1}";
+        else
+            gw_fs_cmd="";
+        fi;
+    fi;
+    fi;
+else if itest.s $bootdevice == spi; then
+    mtdparts_flash="spansion:${mtdpart_uboot},${mtdpart_env1},${mtdpart_env2},${mtdpart_ubfi1},${mtdpart_ubfi2},${mtdpart_atom_ubfi1},${mtdpart_atom_ubfi2},${mtdpart_kernel},${mtdpart_fs}";
+    if itest ${ACTIMAGE} == 1 || itest ${ACTIMAGE} == 2; then;
+        root_cmd="root=/dev/mtdblock8";
+        phram_cmd="";
+        mtdparts_ram="";
+        mtdparts_flash="${mtdparts_flash}${additional_fss}";
+    fi;
+    if itest ${ACTIMAGE} == 3; then
+        root_cmd="root=/dev/mtdblock2";
+        phram_cmd="phram.phram=RAM0,${ubfibase},${ubfipartsize} mem=${mem}";
+        mtdparts_ram="RAM0:${mtdpart_kernel_ram},${mtdpart_fs_ram}${additional_fss};";
+    fi;
+    nvram_cmd="";
+    gw_fs_cmd="";
+    mtdparts_flash="${mtdparts_flash},${mtdpart_nvram}";
+    mtd_cmd="mtdparts=${mtdparts_ram}${mtdparts_flash}";
+else
+    if itest ${ACTIMAGE} == 3; then
+        nvram_cmd="";
+        gw_fs_cmd="";
+        root_cmd="root=/dev/mtdblock2";
+        phram_cmd="phram.phram=RAM0,${ubfibase},${ubfipartsize} mem=${mem}";
+        mtd_cmd="mtdparts=RAM0:${mtdpart_kernel_ram},${mtdpart_fs_ram}${additional_fss};";
+    fi;
+fi;
+fi;
+
+
+eval 0${KLOGLEVEL} + 0
+if itest ${evalval} != 0;
+then
+    bootargs_extra="$bootargs_extra debug loglevel=${KLOGLEVEL}";
+fi
+
+# Set environment variables 
+setenv bootargs "${root_cmd} ${nvram_cmd} ${gw_fs_cmd} ${mtd_cmd} ${phram_cmd} console=ttyS0,${baudrate}n8 ${nfsinfo} $bootargs_extra";
+
+if itest.s $bootdevice == mmc; then
+    eval ${scriptsize} + ${ubfiaddr};
+    setenv LOADADDR $evalval;
+else
+    setenv LOADADDR $multibase;
+fi;
+
+setenv arm11fssize $rootfs_size
+setenv arm11fspartoffset $fspartoffset
+setenv arm11kernelsize $kernelsize
+setenv arm11kernelpartoffset $kernelpartoffset
+
+echo Load address ............. $LOADADDR;
+echo Kernel partition offset .. $kernelpartoffset;
+echo kernel size .............. $kernelsize;
+echo Root FS partition offset . $fspartoffset;
+echo Root FS size ............. $rootfs_size
+echo Additional FS ............ $additional_fss
+
+#echo [DEBUG] Kernel Bootargs = $bootargs
+#echo [DEBUG] LOADADDR ${LOADADDR}
+echo ========== Script Done ============================;
+echo ;
+
+
+
