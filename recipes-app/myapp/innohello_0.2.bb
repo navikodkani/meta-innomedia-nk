@@ -13,17 +13,17 @@ BB_STRICT_CHECKSUM = "0"
 
 # Where to find the source files (can be local, Git, etc.)
 # SRC_URI = "git://server.com/PATH/TO/ti-linux-kernel.git;protocol=https"
-## SRC_URI = "git://github.com/innomediahho/innohellohh01.git;protocol=https"
+## SRC_URI = "git://github.com/navikodkani/innohello-nk.git;protocol=https"
 
 # If local folder in 'src'
 # SRC_URI = "file://src"
 
 # This works but downloads from GitHub like a tar... Need to figure out how to make it work via git protocol
-#SRC_URI = "http://github.com/innomediahho/innohellohh01/archive/refs/heads/main.zip;protocol=http"
+#SRC_URI = "http://github.com/navikodkani/innohello-nk/archive/refs/heads/main.zip;protocol=http"
 #SRC_URI[sha256sum] = "dd9989a02cbc291e69d6f1d1f87528668c9f95279312acf45f666cb4905ec4f5"
 
 # This pulls using git protocol but need to provide a source version
-SRC_URI = "git://github.com/innomediahho/innohellohh01.git;branch=main"
+SRC_URI = "git://github.com/navikodkani/innohello-nk.git;branch=main"
 # Some version?
 SRCREV = "main"
 
@@ -32,8 +32,8 @@ SRCREV = "main"
 # Where to keep downloaded source files (in tmp/work/...)
 # S = "${WORKDIR}/src"
 
-# Against the main.zip file the folder created by GitHub is 'innohellohh01-main'
-#S = "${WORKDIR}/innohellohh01-main"
+# Against the main.zip file the folder created by GitHub is 'innohello-main'
+#S = "${WORKDIR}/innohello-main"
 
 # Git pulled source ends up in a folder called 'git'
 S = "${WORKDIR}/git"
