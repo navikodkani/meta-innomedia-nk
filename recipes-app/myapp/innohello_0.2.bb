@@ -56,7 +56,7 @@ do_install() {
 python do_display_banner() {
     bb.plain("***********************************************");
     bb.plain("*                                             *");
-    bb.plain("* Howard's innohello 2 GitHub bitbake-layer   *");
+    bb.plain("* NK's innohello 2 GitHub bitbake-layer   *");
     bb.plain("*                                             *");
     bb.plain("***********************************************");
 }
