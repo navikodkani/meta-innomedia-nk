@@ -11,7 +11,7 @@ BB_STRICT_CHECKSUM = "0"
 
 
 # This pulls using git protocol but need to provide a source version
-SRC_URI = "git://github.com/innomediahho/innobyehh01.git;branch=main"
+SRC_URI = "git://github.com/navikodkani/innobye-nk.git;branch=main"
 # Some version?
 SRCREV = "main"
 
@@ -35,7 +35,7 @@ do_install() {
 python do_display_banner() {
     bb.plain("***********************************************");
     bb.plain("*                                             *");
-    bb.plain("* Howard's innobye 1 GitHub bitbake-layer     *");
+    bb.plain("* NK's innobye 1 GitHub bitbake-layer     *");
     bb.plain("*                                             *");
     bb.plain("***********************************************");
 }
